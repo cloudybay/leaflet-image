@@ -5,9 +5,23 @@ var queue = require('d3-queue').queue;
 
 var cacheBusterDate = +new Date();
 
+
+// handle ie can't get svg.outerHTML
+Object.defineProperty(SVGElement.prototype, 'outerHTML', {
+    get: function () {
+        var $node, $temp;
+        $temp = document.createElement('div');
+        $node = this.cloneNode(true);
+        $temp.appendChild($node);
+        return $temp.innerHTML;
+    },
+    enumerable: false,
+    configurable: true
+});
+
+
 // leaflet-image
 module.exports = function leafletImage(map, callback) {
-
     var hasMapbox = !!L.mapbox;
 
     var dimensions = map.getSize(),
@@ -26,27 +40,31 @@ module.exports = function leafletImage(map, callback) {
     var dummyctx = dummycanvas.getContext('2d');
     dummyctx.fillStyle = 'rgba(0,0,0,0)';
     dummyctx.fillRect(0, 0, 1, 1);
-
     // layers are drawn in the same order as they are composed in the DOM:
     // tiles, paths, and then markers
-    map.eachLayer(drawTileLayer);
-    if (map._pathRoot) {
-        layerQueue.defer(handlePathRoot, map._pathRoot);
-    } else if (map._panes) {
-        var firstCanvas = map._panes.overlayPane.getElementsByTagName('canvas').item(0);
-        if (firstCanvas) { layerQueue.defer(handlePathRoot, firstCanvas); }
-    }
-    map.eachLayer(drawMarkerLayer);
+    map.eachLayer(drawLayer);
     layerQueue.awaitAll(layersDone);
 
-    function drawTileLayer(l) {
-        if (l instanceof L.TileLayer) layerQueue.defer(handleTileLayer, l);
-        else if (l._heat) layerQueue.defer(handlePathRoot, l._canvas);
-    }
-
-    function drawMarkerLayer(l) {
-        if (l instanceof L.Marker && l.options.icon instanceof L.Icon) {
+    function drawLayer(l) {
+        if (l instanceof L.TileLayer) {
+            layerQueue.defer(handleTileLayer, l);
+        }
+        else if (l instanceof L.Marker && l.options.icon instanceof L.Icon) {
             layerQueue.defer(handleMarkerLayer, l);
+        }
+        else if (l instanceof L.ImageOverlay) {
+            layerQueue.defer(handleImageOverlay, l);
+        }
+        else if (l instanceof L.Path) {
+            layerQueue.defer(handlePathRoot, l);
+        }
+
+        else {
+            if (l._container) {
+                if (l._container.firstChild && l._container.firstChild.tagName == 'CANVAS') {
+                    layerQueue.defer(handleOtherCanvas, l._container);
+                }
+            }
         }
     }
 
@@ -58,7 +76,16 @@ module.exports = function leafletImage(map, callback) {
         if (err) throw err;
         layers.forEach(function (layer) {
             if (layer && layer.canvas) {
-                ctx.drawImage(layer.canvas, 0, 0);
+                if (!layer['z-index']) {
+                    ctx.drawImage(layer.canvas, 0, 0);
+                }
+            }
+        });
+        layers.forEach(function (layer) {
+            if (layer && layer.canvas) {
+                if (layer['z-index']) {
+                    ctx.drawImage(layer.canvas, 0, 0);
+                }
             }
         });
         done();
@@ -119,6 +146,7 @@ module.exports = function leafletImage(map, callback) {
                     tileQueue.defer(loadTile, url, tilePos, tileSize);
                 }
             }
+
         });
 
         tileQueue.awaitAll(tileQueueFinish);
@@ -132,16 +160,16 @@ module.exports = function leafletImage(map, callback) {
         }
 
         function loadTile(url, tilePos, tileSize, callback) {
-            var im = new Image();
-            im.crossOrigin = '';
-            im.onload = function () {
+            var img = new Image();
+            img.crossOrigin = '';
+            img.onload = function () {
                 callback(null, {
                     img: this,
                     pos: tilePos,
                     size: tileSize
                 });
             };
-            im.onerror = function (e) {
+            img.onerror = function (e) {
                 // use canvas instead of errorTileUrl if errorTileUrl get 404
                 if (layer.options.errorTileUrl != '' && e.target.errorCheck === undefined) {
                     e.target.errorCheck = true;
@@ -154,7 +182,7 @@ module.exports = function leafletImage(map, callback) {
                     });
                 }
             };
-            im.src = url;
+            img.src = url;
         }
 
         function tileQueueFinish(err, data) {
@@ -168,21 +196,90 @@ module.exports = function leafletImage(map, callback) {
         }
     }
 
+    function handleImageOverlay(imgOverlay, callback) {
+        var imgBounds = imgOverlay._bounds,
+            pixelBounds = map.getPixelBounds(),
+            bounds = new L.Bounds(
+                map.latLngToLayerPoint(imgBounds.getNorthWest()),
+                map.latLngToLayerPoint(imgBounds.getSouthEast())),
+            size = bounds.getSize(),
+            canvas = document.createElement('canvas');
+        canvas.width = dimensions.x;
+        canvas.height = dimensions.y;
+
+        var pos = map.project(imgBounds.getNorthWest()).subtract(pixelBounds.min);
+        var ctx = canvas.getContext('2d');
+        var img = new Image();
+        try {
+            img.crossOrigin = '';
+            img.src = imgOverlay._url;
+            img.onload = function () {
+                ctx.drawImage(this, pos.x, pos.y, size.x, size.y);
+                callback(null, {
+                    canvas: canvas
+                });
+            };
+        } catch(e) {
+            console.error('Element could not be drawn on canvas', imgOverlay); // eslint-disable-line no-console
+        }
+    }
+
     function handlePathRoot(root, callback) {
+        root = map._pathRoot;
         var bounds = map.getPixelBounds(),
             origin = map.getPixelOrigin(),
             canvas = document.createElement('canvas');
         canvas.width = dimensions.x;
         canvas.height = dimensions.y;
+
         var ctx = canvas.getContext('2d');
         var pos = L.DomUtil.getPosition(root).subtract(bounds.min).add(origin);
+
+        var img = new Image();
+
+        // we clone root element because root attr will reset.
+        root = root.cloneNode(true);
+        root.setAttribute("version", "1.1");
+        root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        root.setAttribute("style", "");
+
+        var root_html = root.outerHTML;
+        var url = 'data:image/svg+xml;base64,' + window.btoa(root_html);
+
+        root.remove();
         try {
-            ctx.drawImage(root, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
-            callback(null, {
-                canvas: canvas
-            });
+            img.src = url;
+            img.crossOrigin = '';
+            img.onload = function () {
+                ctx.globalAlpha = 0.3;
+                ctx.drawImage(img, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
+                callback(null, {
+                    canvas: canvas
+                });
+            };
         } catch(e) {
             console.error('Element could not be drawn on canvas', root); // eslint-disable-line no-console
+        }
+    }
+
+    function handleOtherCanvas(container, callback) {
+        var source_canvas = container.firstChild,
+            bounds = map.getPixelBounds(),
+            origin = map.getPixelOrigin(),
+            canvas = document.createElement('canvas');
+        canvas.width = dimensions.x;
+        canvas.height = dimensions.y;
+
+        var ctx = canvas.getContext('2d');
+        var pos = L.DomUtil.getPosition(container).subtract(bounds.min).add(origin);
+        try {
+            ctx.drawImage(source_canvas, pos.x, pos.y, source_canvas.width, source_canvas.height);
+            callback(null, {
+                canvas: canvas,
+                'z-index': 999
+            });
+        } catch(e) {
+            console.error('Element could not be drawn on canvas', canvas); // eslint-disable-line no-console
         }
     }
 
@@ -190,37 +287,68 @@ module.exports = function leafletImage(map, callback) {
         var canvas = document.createElement('canvas'),
             ctx = canvas.getContext('2d'),
             pixelBounds = map.getPixelBounds(),
-            minPoint = new L.Point(pixelBounds.min.x, pixelBounds.min.y),
             pixelPoint = map.project(marker.getLatLng()),
-            isBase64 = /^data\:/.test(marker._icon.src),
-            url = isBase64 ? marker._icon.src : addCacheString(marker._icon.src),
-            im = new Image(),
-            options = marker.options.icon.options,
-            size = options.iconSize,
-            pos = pixelPoint.subtract(minPoint),
-            anchor = L.point(options.iconAnchor || size && size.divideBy(2, true));
-
-        if (size instanceof L.Point) size = [size.x, size.y];
-
-        var x = Math.round(pos.x - size[0] + anchor.x),
-            y = Math.round(pos.y - anchor.y);
+            pos = pixelPoint.subtract(pixelBounds.min);
 
         canvas.width = dimensions.x;
         canvas.height = dimensions.y;
-        im.crossOrigin = '';
 
-        im.onload = function () {
-            ctx.drawImage(this, x, y, size[0], size[1]);
+        var icon = marker._icon,
+            icon_settings = marker.options.icon,
+            options = icon_settings.options,
+            icon_size = options.iconSize,
+            url = "";
+
+        // shift the icon position to currect position.
+        if (icon_size instanceof L.Point) icon_size = [icon_size.x, icon_size.y];
+        pos = shift_pos(pos, icon_size[0], icon_size[1]);
+
+        // divicon
+        if (options.html) {
+            var element = icon.firstChild;
+
+            if (element instanceof HTMLCanvasElement) {
+                drawImg(ctx, element, pos, icon_size);
+            }
+            else if (element instanceof SVGElement){
+                url = 'data:image/svg+xml;base64,' + window.btoa(options.html);
+            }
+        }
+        // normal icon
+        else {
+            var icon_url = options.iconUrl;
+            var isBase64 = /^data\:/.test(icon_url);
+            url = isBase64 ? icon_url : addCacheString(icon_url);
+        }
+
+        try {
+            var img = new Image();
+
+            img.crossOrigin = '';
+            img.src = url;
+
+            img.onload = function () {
+                drawImg(ctx, this, pos, icon_size)
+            };
+        } catch(e) {
+            console.error('Element could not be drawn on canvas', icon); // eslint-disable-line no-console
+        }
+
+        function drawImg(ctx, target, pos, size) {
+            ctx.drawImage(target, pos.x, pos.y, size[0], size[1]);
             callback(null, {
-                canvas: canvas
+                canvas: canvas,
+                'z-index': 99
             });
-        };
+        }
 
-        im.src = url;
+        function shift_pos(pos, x, y) {
+            pos.x = Math.round(pos.x - x + x / 2);
+            pos.y = Math.round(pos.y - y / 2);
 
-        if (isBase64) im.onload();
+            return pos;
+        }
     }
-
     function addCacheString(url) {
         // If it's a data URL we don't want to touch this.
         if (isDataURL(url) || url.indexOf('mapbox.com/styles/v1') !== -1) {
@@ -233,7 +361,6 @@ module.exports = function leafletImage(map, callback) {
         var dataURLRegex = /^\s*data:([a-z]+\/[a-z]+(;[a-z\-]+\=[a-z\-]+)?)?(;base64)?,[a-z0-9\!\$\&\'\,\(\)\*\+\,\;\=\-\.\_\~\:\@\/\?\%\s]*\s*$/i;
         return !!url.match(dataURLRegex);
     }
-
 };
 
 },{"d3-queue":2}],2:[function(require,module,exports){
