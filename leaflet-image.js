@@ -61,7 +61,7 @@ module.exports = function leafletImage(map, callback) {
 
         else {
             if (l._container) {
-                if (l._container.firstChild && l._container.firstChild.tagName == 'CANVAS') {
+                if (l._container.firstChild && l._container.firstChild instanceof HTMLCanvasElement) {
                     layerQueue.defer(handleOtherCanvas, l._container);
                 }
             }
@@ -303,8 +303,8 @@ module.exports = function leafletImage(map, callback) {
         if (icon_size instanceof L.Point) icon_size = [icon_size.x, icon_size.y];
         pos = shift_pos(pos, icon_size[0], icon_size[1]);
 
-        // divicon
-        if (options.html) {
+        // L.divicon
+        if (options.hasOwnProperty("html")) {
             var element = icon.firstChild;
 
             if (element instanceof HTMLCanvasElement) {
@@ -314,7 +314,7 @@ module.exports = function leafletImage(map, callback) {
                 url = 'data:image/svg+xml;base64,' + window.btoa(options.html);
             }
         }
-        // normal icon
+        // L.icon
         else {
             var icon_url = options.iconUrl;
             var isBase64 = /^data\:/.test(icon_url);
