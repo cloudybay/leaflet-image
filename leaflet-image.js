@@ -66,7 +66,7 @@ module.exports = function leafletImage(map, callback) {
                 }
             }
             else if (l._heat) {
-                layerQueue.defer(handlePathRoot, l._canvas);
+                layerQueue.defer(handleHeat, l._canvas);
             }
         }
     }
@@ -265,6 +265,24 @@ module.exports = function leafletImage(map, callback) {
                     canvas: canvas
                 });
             };
+        } catch(e) {
+            console.error('Element could not be drawn on canvas', root); // eslint-disable-line no-console
+        }
+    }
+
+    function handleHeat(root, callback) {
+        var bounds = map.getPixelBounds(),
+            origin = map.getPixelOrigin(),
+            canvas = document.createElement('canvas');
+        canvas.width = dimensions.x;
+        canvas.height = dimensions.y;
+        var ctx = canvas.getContext('2d');
+        var pos = L.DomUtil.getPosition(root).subtract(bounds.min).add(origin);
+        try {
+            ctx.drawImage(root, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
+            callback(null, {
+                canvas: canvas
+            });
         } catch(e) {
             console.error('Element could not be drawn on canvas', root); // eslint-disable-line no-console
         }
