@@ -65,6 +65,9 @@ module.exports = function leafletImage(map, callback) {
                     layerQueue.defer(handleOtherCanvas, l._container);
                 }
             }
+            else if (l._heat) {
+                layerQueue.defer(handlePathRoot, l._canvas);
+            }
         }
     }
 
@@ -225,7 +228,9 @@ module.exports = function leafletImage(map, callback) {
     }
 
     function handlePathRoot(root, callback) {
-        root = map._pathRoot;
+        var path = root._path,
+            _pathRoot = map._pathRoot;
+
         var bounds = map.getPixelBounds(),
             origin = map.getPixelOrigin(),
             canvas = document.createElement('canvas');
@@ -233,25 +238,28 @@ module.exports = function leafletImage(map, callback) {
         canvas.height = dimensions.y;
 
         var ctx = canvas.getContext('2d');
-        var pos = L.DomUtil.getPosition(root).subtract(bounds.min).add(origin);
+        var pos = L.DomUtil.getPosition(_pathRoot).subtract(bounds.min).add(origin);
 
         var img = new Image();
 
-        // we clone root element because root attr will reset.
-        root = root.cloneNode(true);
-        root.setAttribute("version", "1.1");
-        root.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-        root.setAttribute("style", "");
+        // clone a pathRoot svg to be path container.
+        var svg = _pathRoot.cloneNode(true);
+        svg.setAttribute("version", "1.1");
+        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+        svg.setAttribute("style", "");
 
-        var root_html = root.outerHTML;
-        var url = 'data:image/svg+xml;base64,' + window.btoa(root_html);
+        // clear the clone container inner html.
+        svg.innerHTML = "";
+        // append the target with clone
+        svg.appendChild(path.cloneNode(true));
 
-        root.remove();
+        var url = 'data:image/svg+xml;base64,' + window.btoa(svg.outerHTML);
+
+        svg.remove();
         try {
             img.src = url;
             img.crossOrigin = '';
             img.onload = function () {
-                ctx.globalAlpha = 0.3;
                 ctx.drawImage(img, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
                 callback(null, {
                     canvas: canvas
