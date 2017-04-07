@@ -32,6 +32,14 @@ module.exports = function leafletImage(map, callback) {
     canvas.height = dimensions.y;
     var ctx = canvas.getContext('2d');
 
+    // try to get and fill map background setiings by css
+    var map_container = map._container,
+        map_bkg_color = L.DomUtil.getStyle(map_container, 'background-color');
+    if (map_bkg_color) {
+        ctx.fillStyle = map_bkg_color;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     // dummy canvas image when loadTile get 404 error
     // and layer don't have errorTileUrl
     var dummycanvas = document.createElement('canvas');
@@ -57,6 +65,11 @@ module.exports = function leafletImage(map, callback) {
         }
         else if (l instanceof L.Path) {
             layerQueue.defer(handlePathRoot, l);
+        }
+
+        else if (l instanceof L.ShellLayer) {
+            layerQueue.defer(null, l);
+
         }
 
         else {
@@ -174,7 +187,7 @@ module.exports = function leafletImage(map, callback) {
             };
             img.onerror = function (e) {
                 // use canvas instead of errorTileUrl if errorTileUrl get 404
-                if (layer.options.errorTileUrl != '' && e.target.errorCheck === undefined) {
+                if (layer.options.errorTileUrl !== '' && e.target.errorCheck === undefined) {
                     e.target.errorCheck = true;
                     e.target.src = layer.options.errorTileUrl;
                 } else {
@@ -231,6 +244,10 @@ module.exports = function leafletImage(map, callback) {
         var path = root._path,
             _pathRoot = map._pathRoot;
 
+        if (!_pathRoot) {
+            _pathRoot = map._baseRoot;
+        }
+
         var bounds = map.getPixelBounds(),
             origin = map.getPixelOrigin(),
             canvas = document.createElement('canvas');
@@ -254,7 +271,6 @@ module.exports = function leafletImage(map, callback) {
         svg.appendChild(path.cloneNode(true));
 
         var url = 'data:image/svg+xml;base64,' + window.btoa(svg.outerHTML);
-
         svg.remove();
         try {
             img.src = url;
@@ -336,8 +352,18 @@ module.exports = function leafletImage(map, callback) {
             if (element instanceof HTMLCanvasElement) {
                 drawImg(ctx, element, pos, icon_size);
             }
+
+            else if (element instanceof HTMLObjectElement) {
+                var data = element.contentDocument;
+                url = 'data:image/svg+xml;base64,' + window.btoa(data);
+            }
+
             else if (element instanceof SVGElement){
                 url = 'data:image/svg+xml;base64,' + window.btoa(options.html);
+            }
+
+            else {
+                return
             }
         }
         // L.icon
@@ -356,6 +382,7 @@ module.exports = function leafletImage(map, callback) {
             img.onload = function () {
                 drawImg(ctx, this, pos, icon_size)
             };
+
         } catch(e) {
             console.error('Element could not be drawn on canvas', icon); // eslint-disable-line no-console
         }
@@ -375,6 +402,7 @@ module.exports = function leafletImage(map, callback) {
             return pos;
         }
     }
+
     function addCacheString(url) {
         // If it's a data URL we don't want to touch this.
         if (isDataURL(url) || url.indexOf('mapbox.com/styles/v1') !== -1) {
@@ -418,16 +446,19 @@ module.exports = function leafletImage(map, callback) {
   Queue.prototype = queue.prototype = {
     constructor: Queue,
     defer: function(callback) {
+      if (callback === null) return this;
+
       if (typeof callback !== "function" || this._call) throw new Error;
-      if (this._error != null) return this;
+      if (this._error !== null) return this;
       var t = slice.call(arguments, 1);
       t.push(callback);
-      ++this._waiting, this._tasks.push(t);
+      ++this._waiting;
+      this._tasks.push(t);
       poke(this);
       return this;
     },
     abort: function() {
-      if (this._error == null) abort(this, new Error("abort"));
+      if (this._error === null) abort(this, new Error("abort"));
       return this;
     },
     await: function(callback) {
@@ -456,7 +487,8 @@ module.exports = function leafletImage(map, callback) {
           j = t.length - 1,
           c = t[j];
       t[j] = end(q, i);
-      --q._waiting, ++q._active;
+      --q._waiting;
+      ++q._active;
       t = c.apply(null, t);
       if (!q._tasks[i]) continue; // task finished synchronously
       q._tasks[i] = t || noabort;
@@ -466,10 +498,11 @@ module.exports = function leafletImage(map, callback) {
   function end(q, i) {
     return function(e, r) {
       if (!q._tasks[i]) return; // ignore multiple callbacks
-      --q._active, ++q._ended;
+      --q._active;
+      ++q._ended;
       q._tasks[i] = null;
-      if (q._error != null) return; // ignore secondary errors
-      if (e != null) {
+      if (q._error !== null) return; // ignore secondary errors
+      if (e !== null) {
         abort(q, e);
       } else {
         q._data[i] = r;
