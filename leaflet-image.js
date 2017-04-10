@@ -344,7 +344,6 @@ module.exports = function leafletImage(map, callback) {
         // shift the icon position to currect position.
         if (icon_size instanceof L.Point) icon_size = [icon_size.x, icon_size.y];
         pos = shift_pos(pos, icon_size[0], icon_size[1]);
-
         // L.divicon
         if (options.hasOwnProperty("html")) {
             var element = icon.firstChild;
@@ -355,16 +354,25 @@ module.exports = function leafletImage(map, callback) {
 
             else if (element instanceof HTMLObjectElement) {
                 var data = element.contentDocument;
+
                 url = 'data:image/svg+xml;base64,' + window.btoa(data);
             }
 
             else if (element instanceof SVGElement){
-                url = 'data:image/svg+xml;base64,' + window.btoa(options.html);
+                url = 'data:image/svg+xml;base64,' + btoa(options.html);
             }
 
             else {
                 return
             }
+        }
+        // L.SVGIcon
+        else if (icon.contentDocument) {
+            var xml = icon.contentDocument;
+            var svgDoc = new XMLSerializer().serializeToString(xml.documentElement);
+            var DOMURL = window.URL || window.webkitURL || window;
+            var svg = new Blob([svgDoc], {type: 'image/svg+xml'});
+            url = DOMURL.createObjectURL(svg);
         }
         // L.icon
         else {
