@@ -242,47 +242,100 @@ module.exports = function leafletImage(map, callback) {
 
     function handlePathRoot(root, callback) {
         var path = root._path,
-            _pathRoot = map._pathRoot;
+            _pathRoot = null;
+
+        try {
+            var pane = map.getPane(root.options.pane);
+            if (pane) {
+                var svgs = pane.getElementsByTagName("svg");
+                if (svgs.length > 0) {
+                    _pathRoot = svgs[0];
+                }
+            }
+        }
+        catch (e) {
+            console.error(e)
+        }
 
         if (!_pathRoot) {
             _pathRoot = map._baseRoot;
         }
 
-        var bounds = map.getPixelBounds(),
-            origin = map.getPixelOrigin(),
+        if (_pathRoot && path) {
+            var bounds = map.getPixelBounds(),
+                origin = map.getPixelOrigin(),
+                canvas = document.createElement('canvas');
+            canvas.width = dimensions.x;
+            canvas.height = dimensions.y;
+
+            var ctx = canvas.getContext('2d');
+            var pos = L.DomUtil.getPosition(_pathRoot).subtract(bounds.min).add(origin);
+            // var pos = [0, 0];
+            var img = new Image();
+
+            // clone a pathRoot svg to be path container.
+            var svg = _pathRoot.cloneNode(true);
+            svg.setAttribute("version", "1.1");
+            svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+            svg.setAttribute("style", "");
+
+            // clear the clone container inner html.
+            svg.innerHTML = "";
+            // append the target with clone
+            svg.appendChild(path.cloneNode(true));
+
+            var url = 'data:image/svg+xml;base64,' + window.btoa(svg.outerHTML);
+            svg.remove();
+            try {
+                img.src = url;
+                img.crossOrigin = '';
+                img.onload = function () {
+                    ctx.drawImage(img, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
+                    callback(null, {
+                        canvas: canvas
+                    });
+                };
+                img.onerror = function (e) {
+                    // use canvas instead of errorTileUrl if errorTileUrl get 404
+                    callback(null, {
+                        canvas: null
+                    });
+                };
+            } catch(e) {
+                console.error('Element could not be drawn on canvas', root); // eslint-disable-line no-console
+            }
+        } else if (root._renderer) {
+            handleRenderer(root, callback);
+
+        } else {
+            callback(null, {
+                canvas: null
+            });
+        }
+    }
+
+    function handleRenderer(root, callback) {
+        var renderer = root._renderer,
+            rendererBounds = root._bounds,
+            pixelBounds = map.getPixelBounds(),
+            //pixelBounds = root._pxBounds,
+            bounds,
+            size,
             canvas = document.createElement('canvas');
+        bounds = renderer._bounds;
+        size = bounds.getSize();
         canvas.width = dimensions.x;
         canvas.height = dimensions.y;
 
+        var pos = bounds.min;
         var ctx = canvas.getContext('2d');
-        var pos = L.DomUtil.getPosition(_pathRoot).subtract(bounds.min).add(origin);
-
-        var img = new Image();
-
-        // clone a pathRoot svg to be path container.
-        var svg = _pathRoot.cloneNode(true);
-        svg.setAttribute("version", "1.1");
-        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-        svg.setAttribute("style", "");
-
-        // clear the clone container inner html.
-        svg.innerHTML = "";
-        // append the target with clone
-        svg.appendChild(path.cloneNode(true));
-
-        var url = 'data:image/svg+xml;base64,' + window.btoa(svg.outerHTML);
-        svg.remove();
         try {
-            img.src = url;
-            img.crossOrigin = '';
-            img.onload = function () {
-                ctx.drawImage(img, pos.x, pos.y, canvas.width - (pos.x * 2), canvas.height - (pos.y * 2));
-                callback(null, {
-                    canvas: canvas
-                });
-            };
+            ctx.drawImage(renderer._container, pos.x, pos.y, size.x, size.y);
+            callback(null, {
+                canvas: canvas
+            });
         } catch(e) {
-            console.error('Element could not be drawn on canvas', root); // eslint-disable-line no-console
+            console.error('Element could not be drawn on canvas', renderer); // eslint-disable-line no-console
         }
     }
 
