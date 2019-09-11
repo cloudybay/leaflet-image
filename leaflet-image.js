@@ -50,7 +50,13 @@ module.exports = function leafletImage(map, callback) {
     dummyctx.fillRect(0, 0, 1, 1);
     // layers are drawn in the same order as they are composed in the DOM:
     // tiles, paths, and then markers
-    map.eachLayer(drawLayer);
+
+    //map.eachLayer(drawLayer);
+    for (let i in map._layers) {
+        let layer = map._layers[i];
+        drawLayer(layer);
+    }
+
     layerQueue.awaitAll(layersDone);
 
     function drawLayer(l) {
@@ -69,7 +75,6 @@ module.exports = function leafletImage(map, callback) {
 
         else if (l instanceof L.ShellLayer) {
             layerQueue.defer(null, l);
-
         }
 
         else {
@@ -90,20 +95,22 @@ module.exports = function leafletImage(map, callback) {
 
     function layersDone(err, layers) {
         if (err) throw err;
-        layers.forEach(function (layer) {
-            if (layer && layer.canvas) {
-                if (!layer['z-index']) {
-                    ctx.drawImage(layer.canvas, 0, 0);
+        if (layers) {
+            layers.forEach(function (layer) {
+                if (layer && layer.canvas) {
+                    if (!layer['z-index']) {
+                        ctx.drawImage(layer.canvas, 0, 0);
+                    }
                 }
-            }
-        });
-        layers.forEach(function (layer) {
-            if (layer && layer.canvas) {
-                if (layer['z-index']) {
-                    ctx.drawImage(layer.canvas, 0, 0);
+            });
+            layers.forEach(function (layer) {
+                if (layer && layer.canvas) {
+                    if (layer['z-index']) {
+                        ctx.drawImage(layer.canvas, 0, 0);
+                    }
                 }
-            }
-        });
+            });
+        }
         done();
     }
 
@@ -354,7 +361,6 @@ module.exports = function leafletImage(map, callback) {
 
             else if (element instanceof HTMLObjectElement) {
                 var data = element.contentDocument;
-
                 url = 'data:image/svg+xml;base64,' + window.btoa(data);
             }
 
@@ -363,6 +369,7 @@ module.exports = function leafletImage(map, callback) {
             }
 
             else {
+                callback(null, null);
                 return
             }
         }
@@ -376,9 +383,18 @@ module.exports = function leafletImage(map, callback) {
         }
         // L.icon
         else {
-            var icon_url = options.iconUrl;
-            var isBase64 = /^data\:/.test(icon_url);
-            url = isBase64 ? icon_url : addCacheString(icon_url);
+            var element = icon.firstChild;
+            if (element && element.tagName === 'svg'){
+                var svgDoc = new XMLSerializer().serializeToString(element);
+                var DOMURL = window.URL || window.webkitURL || window;
+                var svg = new Blob([svgDoc], {type: 'image/svg+xml'});
+                url = DOMURL.createObjectURL(svg);
+            }
+            else {
+                var icon_url = options.iconUrl;
+                var isBase64 = /^data\:/.test(icon_url);
+                url = isBase64 ? icon_url : addCacheString(icon_url);
+            }
         }
 
         try {
